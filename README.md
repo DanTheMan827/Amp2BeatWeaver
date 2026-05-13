@@ -37,7 +37,7 @@ dotnet run -- <amplitude-input> <output-root-directory>
 - Remaps the 3-lane Amplitude notes to BeatWeaver's 4-lane chart positions
 - Adds a BeatWeaver `master` track with one-measure outro / transition / ending notes after the moggsong-reported song end
 - Writes BeatWeaver `metadata` / `audio` JSON
-- Copies `.mogg` to `.ogg`, stripping any leading non-Ogg header bytes first, padding with appended silence when a 48 kHz source is shorter than the converted MIDI, and re-encoding non-48 kHz sources to 48 kHz at 128 Kbps per channel
+- Copies `.mogg` to `.ogg`, stripping any leading non-Ogg header bytes first, re-encoding to 48 kHz at 128 Kbps per channel when the source sample rate is not already 48 kHz, and always padding with appended silence when the converted MIDI runs longer than the audio
 
 ## Note mapping
 

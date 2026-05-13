@@ -36,8 +36,8 @@ dotnet run --project <repo-path>/Amp2BeatWeaver.csproj -- <amplitude-input> <out
 
 - Audio verification details:
   - `.mogg` headers before the Ogg payload are stripped.
-  - If the source audio is already 48 kHz, the converter keeps the original audio and appends silent Ogg data only when the MIDI runs longer.
-  - If the source audio is not 48 kHz, the converter re-encodes it to 48 kHz and uses 128 Kbps per channel.
+  - If the source audio is not 48 kHz, the converter re-encodes it to 48 kHz at 128 Kbps per channel.
+  - After any re-encoding, if the audio is shorter than the converted MIDI, silent Ogg data is appended to reach the required duration. These two steps are independent: any source may require one, both, or neither.
 
 ## Testing against the Amplitude customs repository
 

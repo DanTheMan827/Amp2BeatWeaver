@@ -309,8 +309,12 @@ static void EnsureOggDurationAtLeast(string outputPath, TimeSpan minimumDuration
 
     if (info.SampleRate != TargetSampleRate)
     {
-        ReencodeOggTo48Khz(outputPath, minimumDuration);
-        return;
+        ReencodeOggTo48Khz(outputPath);
+        if (!TryReadOggVorbisStreamInfo(outputPath, out info))
+        {
+            Console.Error.WriteLine($"Warning: unable to inspect {outputPath} after re-encoding; skipping silence padding.");
+            return;
+        }
     }
 
     long missingSamples = GetMissingSampleCount(info.SampleRate, info.Duration, minimumDuration);
@@ -485,7 +489,7 @@ static void AppendSilentVorbisChain(string outputPath, int channels, int sampleR
     WritePendingPages(oggStream, output, force: true);
 }
 
-static void ReencodeOggTo48Khz(string outputPath, TimeSpan minimumDuration)
+static void ReencodeOggTo48Khz(string outputPath)
 {
     string temporaryPath = $"{outputPath}.tmp";
     File.Delete(temporaryPath);
@@ -506,12 +510,7 @@ static void ReencodeOggTo48Khz(string outputPath, TimeSpan minimumDuration)
         oggStream.PacketIn(HeaderPacketBuilder.BuildBooksPacket(info));
         WritePendingPages(oggStream, output, force: true);
 
-        long encodedFrames = WriteResampledVorbisAudio(reader, processingState, oggStream, output, TargetSampleRate);
-        long minimumFrames = (long)Math.Ceiling(minimumDuration.TotalSeconds * TargetSampleRate);
-        if (encodedFrames < minimumFrames)
-        {
-            WriteSilentFrames(processingState, oggStream, output, reader.Channels, minimumFrames - encodedFrames);
-        }
+        WriteResampledVorbisAudio(reader, processingState, oggStream, output, TargetSampleRate);
 
         processingState.WriteEndOfStream();
         WritePendingPackets(processingState, oggStream, output);
@@ -548,7 +547,7 @@ static VorbisInfo CreateVorbisInfo(int channels, int sampleRate, int targetBitRa
     return bestInfo ?? VorbisInfo.InitVariableBitRate(channels, sampleRate, SilentVorbisQuality);
 }
 
-static long WriteResampledVorbisAudio(VorbisReader reader, ProcessingState processingState, OggStream oggStream, Stream output, int targetSampleRate)
+static void WriteResampledVorbisAudio(VorbisReader reader, ProcessingState processingState, OggStream oggStream, Stream output, int targetSampleRate)
 {
     int channels = reader.Channels;
     double sourceStep = reader.SampleRate / (double)targetSampleRate;
@@ -564,7 +563,6 @@ static long WriteResampledVorbisAudio(VorbisReader reader, ProcessingState proce
     long sourceBaseFrame = 0;
     double nextOutputSourceFrame = 0.0;
     int encodedFrameBufferCount = 0;
-    long encodedFrames = 0;
 
     while (true)
     {
@@ -586,7 +584,6 @@ static long WriteResampledVorbisAudio(VorbisReader reader, ProcessingState proce
             sourceStep,
             encodedBuffer,
             ref encodedFrameBufferCount,
-            ref encodedFrames,
             processingState,
             oggStream,
             output);
@@ -609,14 +606,12 @@ static long WriteResampledVorbisAudio(VorbisReader reader, ProcessingState proce
             sourceStep,
             encodedBuffer,
             ref encodedFrameBufferCount,
-            ref encodedFrames,
             processingState,
             oggStream,
             output);
     }
 
     FlushEncodedFrames(encodedBuffer, ref encodedFrameBufferCount, processingState, oggStream, output);
-    return encodedFrames;
 }
 
 static void EnsureSourceBufferCapacity(float[][] sourceBuffer, int requiredCapacity)
@@ -653,7 +648,6 @@ static void PumpResampler(
     double sourceStep,
     float[][] encodedBuffer,
     ref int encodedFrameBufferCount,
-    ref long encodedFrames,
     ProcessingState processingState,
     OggStream oggStream,
     Stream output)
@@ -672,7 +666,6 @@ static void PumpResampler(
         }
 
         encodedFrameBufferCount++;
-        encodedFrames++;
         nextOutputSourceFrame += sourceStep;
 
         if (encodedFrameBufferCount == SilentVorbisChunkSize)
@@ -712,21 +705,6 @@ static void FlushEncodedFrames(
     processingState.WriteData(encodedBuffer, encodedFrameBufferCount, 0);
     WritePendingPackets(processingState, oggStream, output);
     encodedFrameBufferCount = 0;
-}
-
-static void WriteSilentFrames(ProcessingState processingState, OggStream oggStream, Stream output, int channels, long sampleCount)
-{
-    float[][] silence = Enumerable.Range(0, channels)
-        .Select(_ => new float[SilentVorbisChunkSize])
-        .ToArray();
-
-    while (sampleCount > 0)
-    {
-        int chunkSize = (int)Math.Min(sampleCount, SilentVorbisChunkSize);
-        processingState.WriteData(silence, chunkSize, 0);
-        sampleCount -= chunkSize;
-        WritePendingPackets(processingState, oggStream, output);
-    }
 }
 
 static void WritePendingPackets(ProcessingState processingState, OggStream oggStream, Stream output)
