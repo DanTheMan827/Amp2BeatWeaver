@@ -1,65 +1,27 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Melanchall.DryWetMidi.Common;
 using Melanchall.DryWetMidi.Core;
 using Melanchall.DryWetMidi.Interaction;
 
-if (args.Length < 2)
+// ---- ENTRY POINT ----
+
+if (args.Length != 2)
 {
-    PrintUsage();
+    Console.Error.WriteLine("Usage: Amp2BeatWeaver <amplitude-song-directory> <output-root-directory>");
     return 1;
 }
 
-string inputSongDirectory = Path.GetFullPath(args[0]);
+string inputSongDirectory  = Path.GetFullPath(args[0]);
 string outputRootDirectory = Path.GetFullPath(args[1]);
 
 if (!Directory.Exists(inputSongDirectory))
 {
     Console.Error.WriteLine($"Input directory not found: {inputSongDirectory}");
     return 1;
-}
-
-string? songNameOverride = null;
-string instrumentName = "guitar";
-int transpose = -12;
-Dictionary<int, int> noteMap = new();
-
-for (int i = 2; i < args.Length; i++)
-{
-    string current = args[i];
-    if (current.Equals("--name", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-    {
-        songNameOverride = args[++i];
-    }
-    else if (current.Equals("--instrument", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-    {
-        instrumentName = args[++i];
-    }
-    else if (current.Equals("--transpose", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-    {
-        if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out transpose))
-        {
-            Console.Error.WriteLine("Invalid --transpose value. Expected an integer.");
-            return 1;
-        }
-    }
-    else if (current.Equals("--note-map", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
-    {
-        string mapText = args[++i];
-        if (!TryParseNoteMap(mapText, noteMap))
-        {
-            Console.Error.WriteLine("Invalid --note-map value. Example: --note-map \"96:84,97:85\"");
-            return 1;
-        }
-    }
-    else
-    {
-        Console.Error.WriteLine($"Unknown or incomplete argument: {current}");
-        PrintUsage();
-        return 1;
-    }
 }
 
 string? amplitudeMidi = Directory.EnumerateFiles(inputSongDirectory, "*.mid", SearchOption.TopDirectoryOnly).FirstOrDefault();
@@ -78,228 +40,437 @@ if (amplitudeMoggSong is null)
 
 string? amplitudeMogg = Directory.EnumerateFiles(inputSongDirectory, "*.mogg", SearchOption.TopDirectoryOnly).FirstOrDefault();
 
-Dictionary<string, string> moggSongValues = ParseMoggSong(amplitudeMoggSong);
-string baseSongName = songNameOverride
-    ?? GetFirstValue(moggSongValues, "short_title", "title", "name")
-    ?? Path.GetFileNameWithoutExtension(amplitudeMidi);
+// Parse moggsong
+DtaArray moggSong = DtaParser.Parse(File.ReadAllText(amplitudeMoggSong));
 
-string normalizedSongName = NormalizeName(baseSongName);
-string normalizedInstrumentName = NormalizeName(instrumentName);
-
-if (string.IsNullOrWhiteSpace(normalizedSongName))
+// Song ID: derived from the moggsong filename
+string normalizedSongId = NormalizeName(Path.GetFileNameWithoutExtension(amplitudeMoggSong));
+if (string.IsNullOrWhiteSpace(normalizedSongId))
 {
-    Console.Error.WriteLine("Unable to determine a valid output song name.");
+    Console.Error.WriteLine("Unable to determine a valid output song name from the .moggsong filename.");
     return 1;
 }
 
-string outputSongDirectory = Path.Combine(outputRootDirectory, normalizedSongName);
+// Metadata
+string  title   = DtaHelper.GetString(moggSong, "title")  ?? normalizedSongId;
+string  artist  = DtaHelper.GetString(moggSong, "artist") ?? "Unknown";
+string? bio     = DtaHelper.GetString(moggSong, "desc");
+string? charter = DtaHelper.GetString(moggSong, "charter");
+
+// Tracks and mixing data
+List<MoggTrack> moggTracks    = DtaHelper.GetTracks(moggSong);
+List<double>    moggVolumes   = DtaHelper.GetFloatArray(moggSong, "vols");
+
+// Create output directory
+string outputSongDirectory = Path.Combine(outputRootDirectory, normalizedSongId);
 Directory.CreateDirectory(outputSongDirectory);
 
-string outputMidi = Path.Combine(outputSongDirectory, $"{normalizedSongName}.mid");
-ConvertMidi(amplitudeMidi, outputMidi, normalizedSongName, normalizedInstrumentName, transpose, noteMap);
+// Convert MIDI
+string outputMidi = Path.Combine(outputSongDirectory, $"{normalizedSongId}.mid");
+ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks);
 
+// Copy mogg as ogg
 if (amplitudeMogg is not null)
+    File.Copy(amplitudeMogg, Path.Combine(outputSongDirectory, $"{normalizedSongId}.ogg"), overwrite: true);
+
+// Per-track volumes (average across each track's channels)
+List<double> trackVolumes = ComputeTrackVolumes(moggTracks, moggVolumes);
+bool allZero = trackVolumes.All(v => v == 0.0);
+
+// Write BeatWeaver JSON
+var beatWeaverSong = new BeatWeaverSong
 {
-    string outputMogg = Path.Combine(outputSongDirectory, $"{normalizedSongName}.mogg");
-    File.Copy(amplitudeMogg, outputMogg, overwrite: true);
-}
+    Metadata = new BeatWeaverMetadata
+    {
+        Title  = title,
+        Artist = artist,
+        Bio    = string.IsNullOrWhiteSpace(bio)     ? null : bio,
+        Chart  = string.IsNullOrWhiteSpace(charter) ? null : charter,
+    },
+    Audio = new BeatWeaverAudio
+    {
+        Channels         = moggTracks.Select(t => t.Channels).ToList(),
+        Volume           = allZero ? null : trackVolumes,
+        OutroTracks      = Enumerable.Range(0, moggTracks.Count).ToList(),
+        TransitionTracks = new List<int>(),
+    },
+};
 
-string outputSongJson = Path.Combine(outputSongDirectory, $"{normalizedSongName}.json");
-var beatWeaverSong = BuildBeatWeaverSong(moggSongValues, normalizedSongName, amplitudeMogg is not null);
-File.WriteAllText(outputSongJson, JsonSerializer.Serialize(beatWeaverSong, new JsonSerializerOptions { WriteIndented = true }));
+File.WriteAllText(
+    Path.Combine(outputSongDirectory, $"{normalizedSongId}.json"),
+    JsonSerializer.Serialize(beatWeaverSong, new JsonSerializerOptions
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    }));
 
-Console.WriteLine($"Converted song directory created at: {outputSongDirectory}");
+Console.WriteLine($"Converted: {outputSongDirectory}");
 return 0;
 
-static void PrintUsage()
+// ---- HELPERS ----
+
+static string NormalizeName(string value)
 {
-    Console.WriteLine("Amp2BeatWeaver usage:");
-    Console.WriteLine("  Amp2BeatWeaver <amplitude-song-directory> <output-root-directory> [options]");
-    Console.WriteLine();
-    Console.WriteLine("Options:");
-    Console.WriteLine("  --name <name>             Override output song name before normalization.");
-    Console.WriteLine("  --instrument <name>       MIDI instrument name (default: guitar).");
-    Console.WriteLine("  --transpose <semitones>   Note transpose amount (default: -12).");
-    Console.WriteLine("  --note-map <a:b,c:d>      Explicit note remap pairs (applied before transpose).");
+    if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+    var sb = new StringBuilder(value.Length);
+    foreach (char ch in value.ToLowerInvariant())
+    {
+        if (char.IsLetterOrDigit(ch))
+            sb.Append(ch);
+        else if (char.IsWhiteSpace(ch) || ch is '-' or '_')
+            sb.Append('_');
+    }
+    return Regex.Replace(sb.ToString(), "_+", "_").Trim('_');
 }
+
+/// <summary>
+/// Strip trailing digits from a track name to recover the base instrument type.
+/// e.g. "synth2" → "synth", "bass3" → "bass", "guitar" → "guitar"
+/// </summary>
+static string BaseInstrumentName(string trackName) =>
+    Regex.Replace(trackName, @"\d+$", "");
 
 static void ConvertMidi(
     string inputPath,
     string outputPath,
-    string normalizedTrackName,
-    string normalizedInstrumentName,
-    int transpose,
-    IReadOnlyDictionary<int, int> noteMap)
+    string songName,
+    List<MoggTrack> moggTracks)
 {
+    // Explicit note mapping: Amplitude → BeatWeaver
+    //   Amplitude: Easy  Left=96  Middle=98  Right=100
+    //              Medium Left=102 Middle=104 Right=106
+    //              Hard   Left=108 Middle=110 Right=112
+    //              Expert Left=114 Middle=116 Right=118
+    //   BeatWeaver: Each difficulty has 4 positions (outer-left, inner-left, inner-right, outer-right)
+    //               Amplitude lanes map to positions 1-3 (inner-left, inner-right, outer-right),
+    //               leaving outer-left unused.
+    //   Easy:   C1(24) C#1(25) D1(26) D#1(27)
+    //   Medium: C2(36) C#2(37) D2(38) D#2(39)
+    //   Hard:   C3(48) C#3(49) D3(50) D#3(51)
+    //   Expert: C4(60) C#4(61) D4(62) D#4(63)
+    var noteMap = new Dictionary<int, int>
+    {
+        // Easy
+        { 96,  25 }, { 98,  26 }, { 100, 27 },
+        // Medium
+        { 102, 37 }, { 104, 38 }, { 106, 39 },
+        // Hard
+        { 108, 49 }, { 110, 50 }, { 112, 51 },
+        // Expert
+        { 114, 61 }, { 116, 62 }, { 118, 63 },
+    };
+
+    // Build unique track names: if a name already appears earlier we append an
+    // incrementing counter.  Names that come pre-numbered from the moggsong
+    // (synth2, synth3 …) are treated as fully distinct and pass through unchanged
+    // unless they collide with another entry.
+    var seen    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var uniqueNames = new List<string>();
+    foreach (var track in moggTracks)
+    {
+        string name = NormalizeName(track.Name);
+        if (!seen.TryGetValue(name, out int count))
+        {
+            seen[name] = 1;
+            uniqueNames.Add(name);
+        }
+        else
+        {
+            count++;
+            seen[name] = count;
+            uniqueNames.Add($"{name}{count}");
+        }
+    }
+
     var midi = MidiFile.Read(inputPath);
 
-    foreach (TrackChunk trackChunk in midi.GetTrackChunks())
+    var instrumentTracks = midi.GetTrackChunks()
+        .Where(t => t.Events.Any(e => e is NoteOnEvent))
+        .ToList();
+
+    for (int i = 0; i < instrumentTracks.Count; i++)
     {
-        bool hasNotes = trackChunk.Events.Any(e => e is NoteOnEvent);
-        if (!hasNotes)
+        var track = instrumentTracks[i];
+
+        // Unique display name for this track
+        string uniqueName  = i < uniqueNames.Count ? uniqueNames[i] : $"{songName}{i + 1}";
+
+        // Instrument type (base name without trailing digits)
+        string instrument  = i < moggTracks.Count
+            ? NormalizeName(BaseInstrumentName(moggTracks[i].Name))
+            : uniqueName;
+
+        // Replace any existing name / instrument meta events
+        for (int j = track.Events.Count - 1; j >= 0; j--)
         {
-            continue;
+            if (track.Events[j] is SequenceTrackNameEvent or InstrumentNameEvent)
+                track.Events.RemoveAt(j);
         }
 
-        for (int eventIndex = trackChunk.Events.Count - 1; eventIndex >= 0; eventIndex--)
+        track.Events.Insert(0, new SequenceTrackNameEvent(uniqueName));
+        track.Events.Insert(1, new InstrumentNameEvent(instrument));
+
+        // Remap notes
+        using var mgr = track.ManageNotes();
+        foreach (Note note in mgr.Objects)
         {
-            if (trackChunk.Events[eventIndex] is SequenceTrackNameEvent or InstrumentNameEvent)
-            {
-                trackChunk.Events.RemoveAt(eventIndex);
-            }
-        }
-
-        trackChunk.Events.Insert(0, new SequenceTrackNameEvent(normalizedTrackName));
-        trackChunk.Events.Insert(1, new InstrumentNameEvent(normalizedInstrumentName));
-
-        using var notesManager = trackChunk.ManageNotes();
-        foreach (Note note in notesManager.Objects)
-        {
-            int originalNote = note.NoteNumber;
-            int baseNote = noteMap.TryGetValue(originalNote, out int explicitNote)
-                ? explicitNote
-                : originalNote;
-            int mappedNote = baseNote + transpose;
-
-            mappedNote = Math.Clamp(mappedNote, 0, 127);
-            note.NoteNumber = (SevenBitNumber)mappedNote;
+            if (noteMap.TryGetValue(note.NoteNumber, out int mapped))
+                note.NoteNumber = (SevenBitNumber)mapped;
         }
     }
 
     midi.Write(outputPath, overwriteFile: true);
 }
 
-static bool TryParseNoteMap(string text, Dictionary<int, int> noteMap)
+static List<double> ComputeTrackVolumes(List<MoggTrack> moggTracks, List<double> channelVolumes)
 {
-    foreach (string pairText in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    return moggTracks.Select(track =>
     {
-        string[] pieces = pairText.Split(':', StringSplitOptions.TrimEntries);
-        if (pieces.Length != 2
-            || !int.TryParse(pieces[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int source)
-            || !int.TryParse(pieces[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int target)
-            || source < 0 || source > 127
-            || target < 0 || target > 127)
+        var validChs = track.Channels.Where(c => c < channelVolumes.Count).ToList();
+        return validChs.Count > 0 ? validChs.Average(c => channelVolumes[c]) : 0.0;
+    }).ToList();
+}
+
+// ---- DTA NODE TYPES ----
+
+abstract class DtaNode { }
+
+sealed class DtaAtom : DtaNode
+{
+    public string Value    { get; init; } = "";
+    public bool   IsString { get; init; }
+}
+
+sealed class DtaArray : DtaNode
+{
+    public List<DtaNode> Children { get; } = new();
+}
+
+// ---- DTA PARSER ----
+
+static class DtaParser
+{
+    public static DtaArray Parse(string text)
+    {
+        int pos  = 0;
+        var root = new DtaArray();
+        while (pos < text.Length)
         {
-            return false;
+            SkipJunk(text, ref pos);
+            if (pos >= text.Length) break;
+            var node = ParseNode(text, ref pos);
+            if (node is not null) root.Children.Add(node);
+        }
+        return root;
+    }
+
+    private static DtaNode? ParseNode(string text, ref int pos)
+    {
+        SkipJunk(text, ref pos);
+        if (pos >= text.Length) return null;
+
+        char c = text[pos];
+
+        if (c == '(')
+        {
+            pos++;
+            var arr = new DtaArray();
+            while (pos < text.Length && text[pos] != ')')
+            {
+                SkipJunk(text, ref pos);
+                if (pos < text.Length && text[pos] == ')') break;
+                var child = ParseNode(text, ref pos);
+                if (child is not null) arr.Children.Add(child);
+            }
+            if (pos < text.Length) pos++; // consume ')'
+            return arr;
         }
 
-        noteMap[source] = target;
-    }
-
-    return true;
-}
-
-static Dictionary<string, string> ParseMoggSong(string moggSongPath)
-{
-    string text = File.ReadAllText(moggSongPath);
-    var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-    foreach (Match match in Regex.Matches(text, @"\((?<key>[a-zA-Z0-9_]+)\s+""(?<value>[^""]*)""\)"))
-    {
-        values[match.Groups["key"].Value] = match.Groups["value"].Value;
-    }
-
-    foreach (Match match in Regex.Matches(text, @"\((?<key>[a-zA-Z0-9_]+)\s+(?<value>[a-zA-Z0-9_./:-]+)\)"))
-    {
-        if (!values.ContainsKey(match.Groups["key"].Value))
+        if (c == '"')
         {
-            values[match.Groups["key"].Value] = match.Groups["value"].Value;
+            pos++;
+            var sb = new StringBuilder();
+            while (pos < text.Length && text[pos] != '"')
+            {
+                if (text[pos] == '\\' && pos + 1 < text.Length) { pos++; sb.Append(text[pos]); }
+                else sb.Append(text[pos]);
+                pos++;
+            }
+            if (pos < text.Length) pos++; // consume closing '"'
+            return new DtaAtom { Value = sb.ToString(), IsString = true };
+        }
+
+        if (c == ')')
+        {
+            // Unexpected close paren – skip it and let the caller handle
+            pos++;
+            return null;
+        }
+
+        // Unquoted atom (symbol, number, path, …)
+        {
+            var sb = new StringBuilder();
+            while (pos < text.Length
+                   && !char.IsWhiteSpace(text[pos])
+                   && text[pos] != '(' && text[pos] != ')'
+                   && text[pos] != '"' && text[pos] != ';')
+            {
+                sb.Append(text[pos]);
+                pos++;
+            }
+            return sb.Length > 0 ? new DtaAtom { Value = sb.ToString(), IsString = false } : null;
         }
     }
 
-    return values;
-}
-
-static string? GetFirstValue(IReadOnlyDictionary<string, string> values, params string[] keys)
-{
-    foreach (string key in keys)
+    private static void SkipJunk(string text, ref int pos)
     {
-        if (values.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value))
+        while (pos < text.Length)
         {
-            return value;
+            if (char.IsWhiteSpace(text[pos])) { pos++; continue; }
+            if (text[pos] == ';') { while (pos < text.Length && text[pos] != '\n') pos++; continue; }
+            break;
         }
     }
-
-    return null;
 }
 
-static int ParseInt(IReadOnlyDictionary<string, string> values, int fallback, params string[] keys)
-{
-    string? value = GetFirstValue(values, keys);
-    if (value is null)
-    {
-        return fallback;
-    }
+// ---- DTA HELPER ----
 
-    return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
-        ? parsed
-        : fallback;
-}
-
-static decimal? ParseDecimal(IReadOnlyDictionary<string, string> values, params string[] keys)
+static class DtaHelper
 {
-    string? value = GetFirstValue(values, keys);
-    if (value is null)
+    /// <summary>
+    /// Returns the string value of the second child of the first top-level array
+    /// whose first child is an atom matching <paramref name="key"/>.
+    /// </summary>
+    public static string? GetString(DtaArray root, string key)
     {
+        foreach (var node in FindByKey(root, key))
+        {
+            if (node.Children.Count >= 2 && node.Children[1] is DtaAtom atom)
+                return atom.Value;
+        }
         return null;
     }
 
-    return decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal parsed)
-        ? parsed
-        : null;
-}
-
-static BeatWeaverSong BuildBeatWeaverSong(IReadOnlyDictionary<string, string> moggSongValues, string normalizedSongName, bool hasMogg)
-{
-    return new BeatWeaverSong
+    /// <summary>
+    /// Returns each float value in the second child (a sub-array) of the first
+    /// top-level array whose first child matches <paramref name="key"/>.
+    /// </summary>
+    public static List<double> GetFloatArray(DtaArray root, string key)
     {
-        SongId = normalizedSongName,
-        Title = GetFirstValue(moggSongValues, "title", "short_title", "name") ?? normalizedSongName,
-        Artist = GetFirstValue(moggSongValues, "artist", "short_artist") ?? "unknown",
-        Charter = GetFirstValue(moggSongValues, "charter"),
-        Description = GetFirstValue(moggSongValues, "description"),
-        PreviewStartMs = ParseInt(moggSongValues, 0, "preview_start_ms", "preview_start"),
-        PreviewLengthMs = ParseInt(moggSongValues, 30000, "preview_length_ms", "preview_length"),
-        Bpm = ParseDecimal(moggSongValues, "bpm"),
-        AudioFile = hasMogg ? $"{normalizedSongName}.mogg" : null,
-        MidiFile = $"{normalizedSongName}.mid"
-    };
-}
-
-static string NormalizeName(string value)
-{
-    if (string.IsNullOrWhiteSpace(value))
-    {
-        return string.Empty;
+        foreach (var node in FindByKey(root, key))
+        {
+            if (node.Children.Count >= 2 && node.Children[1] is DtaArray inner)
+            {
+                return inner.Children
+                    .OfType<DtaAtom>()
+                    .Select(a => double.TryParse(
+                        a.Value, NumberStyles.Number, CultureInfo.InvariantCulture, out double d) ? d : 0.0)
+                    .ToList();
+            }
+        }
+        return new List<double>();
     }
 
-    var builder = new StringBuilder(value.Length);
-    foreach (char ch in value.ToLowerInvariant())
+    /// <summary>
+    /// Parses the track list from an Amplitude moggsong DtaArray.
+    ///
+    /// Expected moggsong structure:
+    /// <code>
+    /// (tracks
+    ///   (
+    ///     (trackName (ch1 ch2) optionalEvent)
+    ///     ...
+    ///   )
+    /// )
+    /// </code>
+    /// </summary>
+    public static List<MoggTrack> GetTracks(DtaArray root)
     {
-        if (char.IsLetterOrDigit(ch))
+        foreach (var tracksNode in FindByKey(root, "tracks"))
         {
-            builder.Append(ch);
+            if (tracksNode.Children.Count < 2) continue;
+
+            // Second child is the wrapping array that contains individual track arrays
+            if (tracksNode.Children[1] is not DtaArray trackList) continue;
+
+            var result = new List<MoggTrack>();
+            foreach (var child in trackList.Children)
+            {
+                if (child is not DtaArray trackArr || trackArr.Children.Count < 1) continue;
+
+                string name = (trackArr.Children[0] as DtaAtom)?.Value ?? "unknown";
+
+                var channels = new List<int>();
+                if (trackArr.Children.Count >= 2 && trackArr.Children[1] is DtaArray chArr)
+                {
+                    foreach (var chanNode in chArr.Children.OfType<DtaAtom>())
+                    {
+                        if (int.TryParse(chanNode.Value, out int ch))
+                            channels.Add(ch);
+                    }
+                }
+
+                result.Add(new MoggTrack(name, channels));
+            }
+            return result;
         }
-        else if (char.IsWhiteSpace(ch) || ch is '-' or '_')
-        {
-            builder.Append('_');
-        }
+        return new List<MoggTrack>();
     }
 
-    string normalized = Regex.Replace(builder.ToString(), "_+", "_").Trim('_');
-    return normalized;
+    private static IEnumerable<DtaArray> FindByKey(DtaArray root, string key)
+    {
+        foreach (var child in root.Children)
+        {
+            if (child is DtaArray arr
+                && arr.Children.Count >= 1
+                && arr.Children[0] is DtaAtom atom
+                && atom.Value.Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return arr;
+            }
+        }
+    }
 }
 
-file sealed class BeatWeaverSong
+// ---- DOMAIN TYPES ----
+
+record MoggTrack(string Name, List<int> Channels);
+
+sealed class BeatWeaverSong
 {
-    public required string SongId { get; init; }
-    public required string Title { get; init; }
+    [JsonPropertyName("metadata")]
+    public BeatWeaverMetadata Metadata { get; init; } = null!;
+
+    [JsonPropertyName("audio")]
+    public BeatWeaverAudio Audio { get; init; } = null!;
+}
+
+sealed class BeatWeaverMetadata
+{
+    [JsonPropertyName("artist")]
     public required string Artist { get; init; }
-    public string? Charter { get; init; }
-    public string? Description { get; init; }
-    public int PreviewStartMs { get; init; }
-    public int PreviewLengthMs { get; init; }
-    public decimal? Bpm { get; init; }
-    public string? AudioFile { get; init; }
-    public required string MidiFile { get; init; }
+
+    [JsonPropertyName("title")]
+    public required string Title { get; init; }
+
+    [JsonPropertyName("bio")]
+    public string? Bio { get; init; }
+
+    [JsonPropertyName("chart")]
+    public string? Chart { get; init; }
+}
+
+sealed class BeatWeaverAudio
+{
+    [JsonPropertyName("channels")]
+    public List<List<int>> Channels { get; init; } = null!;
+
+    [JsonPropertyName("volume")]
+    public List<double>? Volume { get; init; }
+
+    [JsonPropertyName("outro_tracks")]
+    public List<int> OutroTracks { get; init; } = null!;
+
+    [JsonPropertyName("transition_tracks")]
+    public List<int> TransitionTracks { get; init; } = null!;
 }
