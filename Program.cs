@@ -237,12 +237,9 @@ static List<MoggTrack> GetMoggTracks(DataArray root)
         var channels = new List<int>();
         for (int index = 0; index < channelArray.Children.Count; index++)
         {
-            try
+            if (channelArray.Children[index] is DataAtom atom && atom.Type == DataType.INT)
             {
-                channels.Add(channelArray.Int(index));
-            }
-            catch
-            {
+                channels.Add(atom.Int);
             }
         }
 
@@ -263,11 +260,16 @@ static List<float> GetFloatArray(DataArray root, string key)
     var result = new List<float>();
     for (int index = 0; index < innerArray.Children.Count; index++)
     {
-        try
+        if (innerArray.Children[index] is DataAtom atom)
         {
-            result.Add(innerArray.Number(index));
+            result.Add(atom.Type switch
+            {
+                DataType.INT => atom.Int,
+                DataType.FLOAT => atom.Float,
+                _ => 0f,
+            });
         }
-        catch
+        else
         {
             result.Add(0f);
         }
