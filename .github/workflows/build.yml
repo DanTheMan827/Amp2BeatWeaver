@@ -89,19 +89,19 @@ jobs:
           first_song_dir="$(dirname "$first_moggsong")"
           zip_path="$RUNNER_TEMP/$(basename "$first_song_dir").zip"
           python3 - <<'PY' "$first_song_dir" "$zip_path"
-import os
-import sys
-import zipfile
+          import os
+          import sys
+          import zipfile
 
-song_dir = sys.argv[1]
-zip_path = sys.argv[2]
-parent = os.path.dirname(song_dir)
-folder = os.path.basename(song_dir)
-with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as archive:
-    for root, _, files in os.walk(song_dir):
-        for name in files:
-            full_path = os.path.join(root, name)
-            relative = os.path.relpath(full_path, parent)
-            archive.write(full_path, relative)
-PY
+          song_dir = sys.argv[1]
+          zip_path = sys.argv[2]
+          parent = os.path.dirname(song_dir)
+          folder = os.path.basename(song_dir)
+          with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as archive:
+              for root, _, files in os.walk(song_dir):
+                  for name in files:
+                      full_path = os.path.join(root, name)
+                      relative = os.path.relpath(full_path, parent)
+                      archive.write(full_path, relative)
+          PY
           dotnet run --project "$GITHUB_WORKSPACE/Amp2BeatWeaver.csproj" -- "$zip_path" "$zip_output"
