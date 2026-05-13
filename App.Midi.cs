@@ -66,8 +66,6 @@ internal static partial class App
                 if (noteMap.TryGetValue(note.NoteNumber, out int mappedNote))
                 {
                     note.NoteNumber = (SevenBitNumber)mappedNote;
-
-
                 }
                 else
                 {
