@@ -10,6 +10,7 @@ using Melanchall.DryWetMidi.Core;
 using Melanchall.DryWetMidi.Interaction;
 
 const string TemporaryExtractionDirectoryPrefix = "amp2beatweaver-";
+const int OggScanBufferSize = 8192;
 
 if (args.Length != 2)
 {
@@ -273,14 +274,23 @@ static void CopyMoggAsOgg(string inputPath, string outputPath)
     using var output = File.Create(outputPath);
 
     long oggOffset = FindOggStreamOffset(input);
-    input.Position = oggOffset >= 0 ? oggOffset : 0;
+    if (oggOffset < 0)
+    {
+        Console.Error.WriteLine($"Warning: no Ogg stream signature found in {inputPath}; copying the file unchanged.");
+        input.Position = 0;
+    }
+    else
+    {
+        input.Position = oggOffset;
+    }
+
     input.CopyTo(output);
 }
 
 static long FindOggStreamOffset(Stream input)
 {
     ReadOnlySpan<byte> oggSignature = "OggS"u8;
-    byte[] buffer = new byte[8192 + oggSignature.Length - 1];
+    byte[] buffer = new byte[OggScanBufferSize + oggSignature.Length - 1];
     int overlap = 0;
     long bytesRead = 0;
 
