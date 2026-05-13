@@ -13,12 +13,15 @@
 
   <ItemGroup>
     <Compile Remove="AmpHelper/**/*.cs" />
+    <Compile Remove="build/**/*.cs" />
     <EmbeddedResource Remove="AmpHelper/**/*.resx" />
+    <EmbeddedResource Remove="build/**/*.resx" />
     <None Remove="AmpHelper/**/*.csproj" />
+    <None Remove="build/**/*.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="AmpHelper/Submodules/DtxCS/Library/DtxCS.csproj" />
+    <ProjectReference Include="build/DtxCS.Net/DtxCS.Net.csproj" />
   </ItemGroup>
 
 </Project>

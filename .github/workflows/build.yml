@@ -25,20 +25,15 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-  
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 3.8.1
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore "$GITHUB_WORKSPACE/Amp2BeatWeaver.csproj"
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build "$GITHUB_WORKSPACE/Amp2BeatWeaver.csproj" --configuration Release --no-restore
 
       - name: Publish
-        run: dotnet publish --configuration Release --no-build --output artifacts/publish /p:UseAppHost=false
+        run: dotnet publish "$GITHUB_WORKSPACE/Amp2BeatWeaver.csproj" --configuration Release --no-build --output artifacts/publish /p:UseAppHost=false
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -69,7 +64,7 @@ jobs:
           lfs: true
 
       - name: Build converter
-        run: dotnet build --configuration Release
+        run: dotnet build "$GITHUB_WORKSPACE/Amp2BeatWeaver.csproj" --configuration Release
 
       - name: Convert all customs
         shell: bash
