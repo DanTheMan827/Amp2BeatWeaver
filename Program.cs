@@ -9,6 +9,8 @@ using Melanchall.DryWetMidi.Common;
 using Melanchall.DryWetMidi.Core;
 using Melanchall.DryWetMidi.Interaction;
 
+const string TemporaryExtractionPrefix = "amp2beatweaver-";
+
 if (args.Length != 2)
 {
     Console.Error.WriteLine("Usage: Amp2BeatWeaver <amplitude-input> <output-root-directory>");
@@ -53,7 +55,7 @@ try
     string artist = moggSong.Array("artist")?.Any(1) ?? "Unknown";
     string? bio = moggSong.Array("desc")?.Any(1);
     string? chart = moggSong.Array("charter")?.Any(1);
-    string? songLength = moggSong.Array("song_info")?.Array("length")?.Any(1);
+    string? songEndPosition = moggSong.Array("song_info")?.Array("length")?.Any(1);
 
     List<MoggTrack> moggTracks = GetMoggTracks(moggSong);
     List<float> moggVolumes = GetFloatArray(moggSong, "vols");
@@ -62,7 +64,7 @@ try
     Directory.CreateDirectory(outputSongDirectory);
 
     string outputMidi = Path.Combine(outputSongDirectory, $"{normalizedSongId}.mid");
-    int playableTrackCount = ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks, songLength);
+    int playableTrackCount = ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks, songEndPosition);
     List<MoggTrack> playableTracks = moggTracks.Take(playableTrackCount).ToList();
 
     if (amplitudeMogg is not null)
@@ -135,7 +137,7 @@ static string ResolveInputSongDirectory(string inputPath, out string? temporaryI
 
 static string ResolveSongDirectoryFromZip(string zipPath, out string temporaryInputDirectory)
 {
-    temporaryInputDirectory = Path.Combine(Path.GetTempPath(), $"amp2beatweaver-{Guid.NewGuid():N}");
+    temporaryInputDirectory = Path.Combine(Path.GetTempPath(), $"{TemporaryExtractionPrefix}{Guid.NewGuid():N}");
     ZipFile.ExtractToDirectory(zipPath, temporaryInputDirectory);
     return ResolveSongDirectoryFromDirectory(temporaryInputDirectory);
 }
@@ -187,10 +189,10 @@ static string NormalizeName(string value)
         }
     }
 
-    return Regex.Replace(builder.ToString(), "_+", "_").Trim('_');
+    return RegexHelpers.RepeatedUnderscores.Replace(builder.ToString(), "_").Trim('_');
 }
 
-static string BaseInstrumentName(string trackName) => Regex.Replace(trackName, @"\d+$", "");
+static string BaseInstrumentName(string trackName) => RegexHelpers.TrailingDigits.Replace(trackName, "");
 
 static string NormalizeInstrumentName(string trackName)
 {
@@ -294,7 +296,7 @@ static List<float> GetFloatArray(DataArray root, string key)
     return result;
 }
 
-static int ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks, string? songLength)
+static int ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks, string? songEndPosition)
 {
     var noteMap = new Dictionary<int, int>
     {
@@ -357,14 +359,14 @@ static int ConvertMidi(string inputPath, string outputPath, string songName, Lis
         }
     }
 
-    AddMasterTrack(midi, songLength);
+    AddMasterTrack(midi, songEndPosition);
     midi.Write(outputPath, overwriteFile: true);
     return noteTracks.Count;
 }
 
-static void AddMasterTrack(MidiFile midi, string? songLength)
+static void AddMasterTrack(MidiFile midi, string? songEndPosition)
 {
-    if (!TryGetRoundedSongEndBar(songLength, out long startBar))
+    if (!TryGetRoundedSongEndBar(songEndPosition, out long startBar))
     {
         throw new InvalidOperationException("Unable to determine song length from moggsong data for BeatWeaver master track generation.");
     }
@@ -402,15 +404,15 @@ static bool IsMasterTrack(TrackChunk trackChunk)
         .Any(trackName => string.Equals(trackName.Text, "master", StringComparison.OrdinalIgnoreCase));
 }
 
-static bool TryGetRoundedSongEndBar(string? songLength, out long roundedBar)
+static bool TryGetRoundedSongEndBar(string? songEndPosition, out long roundedBar)
 {
     roundedBar = 0;
-    if (string.IsNullOrWhiteSpace(songLength))
+    if (string.IsNullOrWhiteSpace(songEndPosition))
     {
         return false;
     }
 
-    string[] parts = songLength.Split(':', StringSplitOptions.TrimEntries);
+    string[] parts = songEndPosition.Split(':', StringSplitOptions.TrimEntries);
     if (parts.Length == 0 || !long.TryParse(parts[0], out long bar))
     {
         return false;
@@ -509,4 +511,10 @@ sealed class BeatWeaverAudio
 
     [JsonPropertyName("transition_tracks")]
     public required List<int> TransitionTracks { get; init; }
+}
+
+file static class RegexHelpers
+{
+    public static readonly Regex RepeatedUnderscores = new("_+", RegexOptions.Compiled);
+    public static readonly Regex TrailingDigits = new(@"\d+$", RegexOptions.Compiled);
 }
