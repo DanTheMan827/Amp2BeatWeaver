@@ -1,53 +1,56 @@
 # Amp2BeatWeaver
 
-C# CLI tool to convert an Amplitude 2016 song folder into a BeatWeaver song folder.
+C# CLI tool to convert an Amplitude 2016 song input into a BeatWeaver song folder.
 
-## What it does
+## Setup
 
-- Reads Amplitude song assets from an input directory (`.mid`, `.moggsong`, optional `.mogg`).
-- Parses the `.moggsong` (DTA format via DtxCS) to extract track names, channel assignments, volumes and song metadata.
-- Remaps Amplitude MIDI note numbers to their BeatWeaver equivalents (3 Amplitude lanes → 4 BeatWeaver lanes, mapped to inner-left / inner-right / outer-right per difficulty).
-- Sets per-track MIDI `SequenceTrackName` (unique name) and `InstrumentName` (base instrument type) events from the moggsong data.
-- Writes a BeatWeaver-compatible `.json` with the correct `metadata` and `audio` structure.
-- Copies the `.mogg` file as `.ogg` for BeatWeaver.
-- Produces a BeatWeaver song directory where all output files share the song name.
+This repo uses `AmpHelper` as a git submodule and consumes `DtxCS` from that submodule.
+
+```bash
+git submodule update --init --recursive
+```
 
 ## Build
 
 ```bash
 dotnet build
+dotnet test
 ```
 
 ## Usage
 
 ```bash
-dotnet run -- <amplitude-song-directory> <output-root-directory>
+dotnet run -- <amplitude-input> <output-root-directory>
 ```
 
-The output song name is derived from the `.moggsong` filename.
+`<amplitude-input>` may be any of:
 
-## Example
+- a song folder
+- a `.moggsong` file inside a song folder
+- a `.zip` file containing a song folder or a single song payload
 
-```bash
-dotnet run -- /path/to/amplitude/slimenest /path/to/beatweaver/music
-```
+## What it does
 
-This creates:
-
-```text
-/path/to/beatweaver/music/slimenest/
-  slimenest.mid
-  slimenest.json
-  slimenest.ogg    (copied from .mogg if present)
-```
+- Parses the Amplitude `.moggsong` with `DtxCS`
+- Derives MIDI track instruments from moggsong track names
+- Ensures BeatWeaver MIDI track names are unique
+- Remaps the 3-lane Amplitude notes to BeatWeaver's 4-lane chart positions
+- Writes BeatWeaver `metadata` / `audio` JSON
+- Copies `.mogg` to `.ogg`
 
 ## Note mapping
 
-| Difficulty | Amplitude Left | Amplitude Middle | Amplitude Right |
-|------------|---------------|-----------------|----------------|
-| Easy       | 96 → C#1 (25)  | 98 → D1 (26)    | 100 → D#1 (27) |
-| Medium     | 102 → C#2 (37) | 104 → D2 (38)   | 106 → D#2 (39) |
-| Hard       | 108 → C#3 (49) | 110 → D3 (50)   | 112 → D#3 (51) |
-| Expert     | 114 → C#4 (61) | 116 → D4 (62)   | 118 → D#4 (63) |
+Amplitude notes map to BeatWeaver's corresponding lanes shifted one slot to the right:
 
-BeatWeaver outer-left (positions 0: C1/C2/C3/C4) is left unused.
+| Difficulty | Amplitude Left | Amplitude Middle | Amplitude Right |
+|------------|----------------|------------------|-----------------|
+| Easy       | 96 → 25        | 98 → 26          | 100 → 27        |
+| Medium     | 102 → 37       | 104 → 38         | 106 → 39        |
+| Hard       | 108 → 49       | 110 → 50         | 112 → 51        |
+| Expert     | 114 → 61       | 116 → 62         | 118 → 63        |
+
+BeatWeaver's outer-left lane remains unused for converted Amplitude notes.
+
+## CI
+
+GitHub Actions builds the app on pushes to any branch, pushes to tags, and manual dispatches. The workflow uploads the published artifact and runs the converter against all songs in `hmxmilohax/amp-2016-customs` with Git LFS enabled.
