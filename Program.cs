@@ -53,6 +53,7 @@ try
     string artist = moggSong.Array("artist")?.Any(1) ?? "Unknown";
     string? bio = moggSong.Array("desc")?.Any(1);
     string? chart = moggSong.Array("charter")?.Any(1);
+    string? songLength = moggSong.Array("song_info")?.Array("length")?.Any(1);
 
     List<MoggTrack> moggTracks = GetMoggTracks(moggSong);
     List<float> moggVolumes = GetFloatArray(moggSong, "vols");
@@ -61,7 +62,7 @@ try
     Directory.CreateDirectory(outputSongDirectory);
 
     string outputMidi = Path.Combine(outputSongDirectory, $"{normalizedSongId}.mid");
-    int playableTrackCount = ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks);
+    int playableTrackCount = ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks, songLength);
     List<MoggTrack> playableTracks = moggTracks.Take(playableTrackCount).ToList();
 
     if (amplitudeMogg is not null)
@@ -194,7 +195,27 @@ static string BaseInstrumentName(string trackName) => Regex.Replace(trackName, @
 static string NormalizeInstrumentName(string trackName)
 {
     string normalized = NormalizeName(BaseInstrumentName(trackName));
-    return normalized switch
+    string mapped = TryMapInstrumentToken(normalized);
+    if (!string.IsNullOrEmpty(mapped))
+    {
+        return mapped;
+    }
+
+    foreach (string token in normalized.Split('_', StringSplitOptions.RemoveEmptyEntries))
+    {
+        mapped = TryMapInstrumentToken(token);
+        if (!string.IsNullOrEmpty(mapped))
+        {
+            return mapped;
+        }
+    }
+
+    return "fx";
+}
+
+static string TryMapInstrumentToken(string token)
+{
+    return token switch
     {
         "drums" => "drums",
         "bass" => "bass",
@@ -208,12 +229,7 @@ static string NormalizeInstrumentName(string trackName)
         "perc" => "fx",
         "freestyle" => "fx",
         "bg_click" => "fx",
-        _ when normalized.Contains("drum", StringComparison.Ordinal) => "drums",
-        _ when normalized.Contains("bass", StringComparison.Ordinal) => "bass",
-        _ when normalized.Contains("guitar", StringComparison.Ordinal) => "guitar",
-        _ when normalized.Contains("synth", StringComparison.Ordinal) => "synth",
-        _ when normalized.Contains("vocal", StringComparison.Ordinal) || normalized.Contains("vox", StringComparison.Ordinal) => "vocals",
-        _ => "fx",
+        _ => string.Empty,
     };
 }
 
@@ -278,7 +294,7 @@ static List<float> GetFloatArray(DataArray root, string key)
     return result;
 }
 
-static int ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks)
+static int ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks, string? songLength)
 {
     var noteMap = new Dictionary<int, int>
     {
@@ -341,8 +357,79 @@ static int ConvertMidi(string inputPath, string outputPath, string songName, Lis
         }
     }
 
+    AddMasterTrack(midi, songLength);
     midi.Write(outputPath, overwriteFile: true);
     return noteTracks.Count;
+}
+
+static void AddMasterTrack(MidiFile midi, string? songLength)
+{
+    if (!TryGetRoundedSongEndBar(songLength, out long startBar))
+    {
+        throw new InvalidOperationException("Unable to determine song length from moggsong data for BeatWeaver master track generation.");
+    }
+
+    foreach (TrackChunk existingMasterTrack in midi
+                 .GetTrackChunks()
+                 .Where(IsMasterTrack)
+                 .ToList())
+    {
+        midi.Chunks.Remove(existingMasterTrack);
+    }
+
+    TempoMap tempoMap = midi.GetTempoMap();
+    long outroStart = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar, 0, 0), tempoMap);
+    long transitionStart = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar + 1, 0, 0), tempoMap);
+    long endingStart = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar + 2, 0, 0), tempoMap);
+    long songStop = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar + 3, 0, 0), tempoMap);
+
+    var masterTrack = new TrackChunk(new SequenceTrackNameEvent("master"));
+    using (var notesManager = masterTrack.ManageNotes())
+    {
+        notesManager.Objects.Add(new Note((SevenBitNumber)2, transitionStart - outroStart) { Time = outroStart });
+        notesManager.Objects.Add(new Note((SevenBitNumber)3, endingStart - transitionStart) { Time = transitionStart });
+        notesManager.Objects.Add(new Note((SevenBitNumber)4, songStop - endingStart) { Time = endingStart });
+    }
+
+    midi.Chunks.Add(masterTrack);
+}
+
+static bool IsMasterTrack(TrackChunk trackChunk)
+{
+    return trackChunk
+        .Events
+        .OfType<SequenceTrackNameEvent>()
+        .Any(trackName => string.Equals(trackName.Text, "master", StringComparison.OrdinalIgnoreCase));
+}
+
+static bool TryGetRoundedSongEndBar(string? songLength, out long roundedBar)
+{
+    roundedBar = 0;
+    if (string.IsNullOrWhiteSpace(songLength))
+    {
+        return false;
+    }
+
+    string[] parts = songLength.Split(':', StringSplitOptions.TrimEntries);
+    if (parts.Length == 0 || !long.TryParse(parts[0], out long bar))
+    {
+        return false;
+    }
+
+    long beat = 0;
+    long tick = 0;
+    if (parts.Length > 1)
+    {
+        _ = long.TryParse(parts[1], out beat);
+    }
+
+    if (parts.Length > 2)
+    {
+        _ = long.TryParse(parts[2], out tick);
+    }
+
+    roundedBar = bar + (beat > 0 || tick > 0 ? 1 : 0);
+    return true;
 }
 
 static List<int> GetTransitionTracks(List<MoggTrack> moggTracks)
@@ -365,8 +452,20 @@ static List<double> ComputeTrackVolumes(List<MoggTrack> moggTracks, List<float> 
     return moggTracks
         .Select(track =>
         {
-            List<int> validChannels = track.Channels.Where(channel => channel >= 0 && channel < channelVolumes.Count).ToList();
-            return validChannels.Count > 0 ? (double)validChannels.Average(channel => channelVolumes[channel]) : 0.0;
+            double sum = 0.0;
+            int count = 0;
+            foreach (int channel in track.Channels)
+            {
+                if (channel < 0 || channel >= channelVolumes.Count)
+                {
+                    continue;
+                }
+
+                sum += channelVolumes[channel];
+                count++;
+            }
+
+            return count > 0 ? sum / count : 0.0;
         })
         .ToList();
 }

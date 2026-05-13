@@ -35,6 +35,7 @@ dotnet run -- <amplitude-input> <output-root-directory>
 - Derives MIDI track instruments from moggsong track names
 - Ensures BeatWeaver MIDI track names are unique
 - Remaps the 3-lane Amplitude notes to BeatWeaver's 4-lane chart positions
+- Adds a BeatWeaver `master` track with one-measure outro / transition / ending notes after the moggsong-reported song end
 - Writes BeatWeaver `metadata` / `audio` JSON
 - Copies `.mogg` to `.ogg`
 
