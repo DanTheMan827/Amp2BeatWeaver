@@ -61,7 +61,6 @@ internal static partial class App
             string artist = moggSong.Array("artist")?.Any(1) ?? "Unknown";
             string? bio = moggSong.Array("desc")?.Any(1);
             string? chart = moggSong.Array("charter")?.Any(1);
-            string? songEndPosition = moggSong.Array("song_info")?.Array("length")?.Any(1);
 
             List<MoggTrack> moggTracks = GetMoggTracks(moggSong);
             var ambienceTrack = moggTracks.Where(t => t.Name == "bg_click").FirstOrDefault();
@@ -72,7 +71,7 @@ internal static partial class App
             Directory.CreateDirectory(outputSongDirectory);
 
             string outputMidi = Path.Combine(outputSongDirectory, $"{normalizedSongId}.mid");
-            MidiConversionResult midiConversion = ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks, songEndPosition);
+            MidiConversionResult midiConversion = ConvertMidi(amplitudeMidi, outputMidi, normalizedSongId, moggTracks);
             List<MoggTrack> playableTracks = moggTracks.Take(midiConversion.PlayableTrackCount).ToList();
 
             if (amplitudeMogg is not null)

@@ -6,7 +6,7 @@ internal static partial class App
 {
     const short TargetTicksPerQuarterNote = 96;
 
-    static MidiConversionResult ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks, string? songEndPosition)
+    static MidiConversionResult ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks)
     {
         var noteMap = new Dictionary<int, int>
     {
@@ -82,7 +82,7 @@ internal static partial class App
             }
         }
 
-        AddMasterTrack(midi, songEndPosition);
+        AddMasterTrack(midi, noteTracks);
         TimeSpan duration = TimeSpan.FromMilliseconds(midi.GetDuration<MetricTimeSpan>().TotalMilliseconds);
         midi.Write(outputPath, overwriteFile: true);
         return new MidiConversionResult(noteTracks.Count, duration);
@@ -125,13 +125,8 @@ internal static partial class App
         midi.TimeDivision = new TicksPerQuarterNoteTimeDivision(targetTicksPerQuarterNote);
     }
 
-    static void AddMasterTrack(MidiFile midi, string? songEndPosition)
+    static void AddMasterTrack(MidiFile midi, List<TrackChunk> noteTracks)
     {
-        if (!TryGetRoundedSongEndBar(songEndPosition, out long startBar))
-        {
-            throw new InvalidOperationException("Unable to determine BeatWeaver master track placement from moggsong data. Expected song_info.length in bar:beat:tick format.");
-        }
-
         foreach (TrackChunk chunk in midi
             .GetTrackChunks()
             .Where(IsTrackNameEvent)
@@ -144,17 +139,42 @@ internal static partial class App
         }
 
         TempoMap tempoMap = midi.GetTempoMap();
-        long outroStart = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar, 0, 0), tempoMap);
-        long transitionStart = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar + 1, 0, 0), tempoMap);
-        long endingStart = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar + 2, 0, 0), tempoMap);
-        long songStop = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(startBar + 3, 0, 0), tempoMap);
+
+        // Find the tick at which the last note across all note tracks ends.
+        long lastNoteTick = noteTracks
+            .SelectMany(t => t.GetNotes())
+            .Select(n => n.Time + n.Length)
+            .DefaultIfEmpty(0)
+            .Max();
+
+        // Round up to the next full-bar boundary to get the bar where note 4 starts.
+        BarBeatTicksTimeSpan lastNoteTime = TimeConverter.ConvertTo<BarBeatTicksTimeSpan>(lastNoteTick, tempoMap);
+        long finalBar = lastNoteTime.Bars + (lastNoteTime.Beats > 0 || lastNoteTime.Ticks > 0 ? 1 : 0);
+
+        long note4Start = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(finalBar, 0, 0), tempoMap);
+        long note3Start = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(finalBar - 1, 0, 0), tempoMap);
+        long note2Start = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(finalBar - 2, 0, 0), tempoMap);
+        long songStop   = TimeConverter.ConvertFrom(new BarBeatTicksTimeSpan(finalBar + 1, 0, 0), tempoMap);
+
+        // Remove any note-track notes that start at or after note 4's start position.
+        foreach (TrackChunk track in noteTracks)
+        {
+            using var notesManager = track.ManageNotes();
+            foreach (Note note in notesManager.Objects.ToList())
+            {
+                if (note.Time >= note4Start)
+                {
+                    notesManager.Objects.Remove(note);
+                }
+            }
+        }
 
         var masterTrack = new TrackChunk(new SequenceTrackNameEvent("master"));
         using (var notesManager = masterTrack.ManageNotes())
         {
-            notesManager.Objects.Add(new Note((SevenBitNumber)2, transitionStart - outroStart) { Time = outroStart });
-            notesManager.Objects.Add(new Note((SevenBitNumber)3, endingStart - transitionStart) { Time = transitionStart });
-            notesManager.Objects.Add(new Note((SevenBitNumber)4, songStop - endingStart) { Time = endingStart });
+            notesManager.Objects.Add(new Note((SevenBitNumber)2, note3Start - note2Start) { Time = note2Start });
+            notesManager.Objects.Add(new Note((SevenBitNumber)3, note4Start - note3Start) { Time = note3Start });
+            notesManager.Objects.Add(new Note((SevenBitNumber)4, songStop - note4Start)   { Time = note4Start });
         }
 
         midi.Chunks.Add(masterTrack);
@@ -165,39 +185,6 @@ internal static partial class App
         return trackChunk
             .Events
             .OfType<SequenceTrackNameEvent>()
-            .Count() > 0;
-    }
-
-    static bool TryGetRoundedSongEndBar(string? songEndPosition, out long roundedBar)
-    {
-        roundedBar = 0;
-        if (string.IsNullOrWhiteSpace(songEndPosition))
-        {
-            return false;
-        }
-
-        // Amplitude song_info.length is expected as bar:beat:tick.
-        // We only need the next full bar boundary, so any non-zero beat or tick
-        // component rounds the position up to the next measure start.
-        string[] parts = songEndPosition.Split(':', StringSplitOptions.TrimEntries);
-        if (parts.Length == 0 || !long.TryParse(parts[0], out long bar))
-        {
-            return false;
-        }
-
-        long beat = 0;
-        long tick = 0;
-        if (parts.Length > 1)
-        {
-            _ = long.TryParse(parts[1], out beat);
-        }
-
-        if (parts.Length > 2)
-        {
-            _ = long.TryParse(parts[2], out tick);
-        }
-
-        roundedBar = bar + (beat > 0 || tick > 0 ? 1 : 0);
-        return true;
+            .Any();
     }
 }
