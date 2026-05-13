@@ -17,13 +17,13 @@ git submodule update --init --recursive
 - Build the converter:
 
 ```bash
-dotnet build /home/runner/work/Amp2BeatWeaver/Amp2BeatWeaver/Amp2BeatWeaver.csproj
+dotnet build <repo-path>/Amp2BeatWeaver.csproj
 ```
 
 - Run the repository tests:
 
 ```bash
-dotnet test /home/runner/work/Amp2BeatWeaver/Amp2BeatWeaver/Amp2BeatWeaver.csproj
+dotnet test <repo-path>/Amp2BeatWeaver.csproj
 ```
 
 ## Running the converter manually
@@ -31,7 +31,7 @@ dotnet test /home/runner/work/Amp2BeatWeaver/Amp2BeatWeaver/Amp2BeatWeaver.cspro
 - Convert from a song folder, `.moggsong`, or `.zip` input:
 
 ```bash
-dotnet run --project /home/runner/work/Amp2BeatWeaver/Amp2BeatWeaver/Amp2BeatWeaver.csproj -- <amplitude-input> <output-root-directory>
+dotnet run --project <repo-path>/Amp2BeatWeaver.csproj -- <amplitude-input> <output-root-directory>
 ```
 
 - Audio verification details:
@@ -52,8 +52,8 @@ git clone https://github.com/hmxmilohax/amp-2016-customs.git
 cd amp-2016-customs
 git lfs pull
 find songs -name '*.moggsong' | sort
-dotnet run --project /home/runner/work/Amp2BeatWeaver/Amp2BeatWeaver/Amp2BeatWeaver.csproj -- /path/to/song-folder /tmp/output-folder
-dotnet run --project /home/runner/work/Amp2BeatWeaver/Amp2BeatWeaver/Amp2BeatWeaver.csproj -- /path/to/song.moggsong /tmp/output-moggsong
+dotnet run --project <repo-path>/Amp2BeatWeaver.csproj -- /path/to/song-folder /tmp/output-folder
+dotnet run --project <repo-path>/Amp2BeatWeaver.csproj -- /path/to/song.moggsong /tmp/output-moggsong
 ```
 
 To match CI more closely, also create a zip from a song folder and run the converter against that zip input.

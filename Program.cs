@@ -533,7 +533,7 @@ static VorbisInfo CreateVorbisInfo(int channels, int sampleRate, int targetBitRa
 
     for (int step = 0; step <= 110; step++)
     {
-        float quality = -0.1f + (step / 100f);
+        float quality = -0.1f + (step / 100.0f);
         VorbisInfo candidate = VorbisInfo.InitVariableBitRate(channels, sampleRate, quality);
         int difference = Math.Abs(candidate.BitRateNominal - targetBitRate);
         if (difference >= closestDifference)
