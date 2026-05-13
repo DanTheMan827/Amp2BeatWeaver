@@ -38,7 +38,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Amp2BeatWeaver-${{ github.ref_name }}-${{ github.sha }}
+          name: Amp2BeatWeaver
           path: artifacts/publish
 
   test-customs:
