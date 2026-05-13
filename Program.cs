@@ -156,9 +156,10 @@ static void ConvertMidi(
         foreach (Note note in notesManager.Objects)
         {
             int originalNote = note.NoteNumber;
-            int mappedNote = noteMap.TryGetValue(originalNote, out int explicitNote)
+            int baseNote = noteMap.TryGetValue(originalNote, out int explicitNote)
                 ? explicitNote
-                : originalNote + transpose;
+                : originalNote;
+            int mappedNote = baseNote + transpose;
 
             mappedNote = Math.Clamp(mappedNote, 0, 127);
             note.NoteNumber = (SevenBitNumber)mappedNote;
@@ -193,12 +194,12 @@ static Dictionary<string, string> ParseMoggSong(string moggSongPath)
     string text = File.ReadAllText(moggSongPath);
     var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-    foreach (Match match in Regex.Matches(text, "\\((?<key>[a-zA-Z0-9_]+)\\s+\"(?<value>[^\"]*)\"\\)"))
+    foreach (Match match in Regex.Matches(text, @"\((?<key>[a-zA-Z0-9_]+)\s+""(?<value>[^""]*)""\)"))
     {
         values[match.Groups["key"].Value] = match.Groups["value"].Value;
     }
 
-    foreach (Match match in Regex.Matches(text, "\\((?<key>[a-zA-Z0-9_]+)\\s+(?<value>[a-zA-Z0-9_./:-]+)\\)"))
+    foreach (Match match in Regex.Matches(text, @"\((?<key>[a-zA-Z0-9_]+)\s+(?<value>[a-zA-Z0-9_./:-]+)\)"))
     {
         if (!values.ContainsKey(match.Groups["key"].Value))
         {
