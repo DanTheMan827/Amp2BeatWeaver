@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t moggsongs < <(find "$GITHUB_WORKSPACE/amp-2016-customs/songs" -mindepth 2 -maxdepth 2 -name '*.moggsong' | sort)
+          mapfile -t moggsongs < <(find "$GITHUB_WORKSPACE/amp-2016-customs/songs" -name '*.moggsong' | sort)
           test ${#moggsongs[@]} -gt 0
 
           folder_output="$RUNNER_TEMP/output-folder"

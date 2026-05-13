@@ -9,7 +9,7 @@ using Melanchall.DryWetMidi.Common;
 using Melanchall.DryWetMidi.Core;
 using Melanchall.DryWetMidi.Interaction;
 
-const string TemporaryExtractionPrefix = "amp2beatweaver-";
+const string TemporaryExtractionDirectoryPrefix = "amp2beatweaver-";
 
 if (args.Length != 2)
 {
@@ -137,7 +137,7 @@ static string ResolveInputSongDirectory(string inputPath, out string? temporaryI
 
 static string ResolveSongDirectoryFromZip(string zipPath, out string temporaryInputDirectory)
 {
-    temporaryInputDirectory = Path.Combine(Path.GetTempPath(), $"{TemporaryExtractionPrefix}{Guid.NewGuid():N}");
+    temporaryInputDirectory = Path.Combine(Path.GetTempPath(), $"{TemporaryExtractionDirectoryPrefix}{Guid.NewGuid():N}");
     ZipFile.ExtractToDirectory(zipPath, temporaryInputDirectory);
     return ResolveSongDirectoryFromDirectory(temporaryInputDirectory);
 }
@@ -368,7 +368,7 @@ static void AddMasterTrack(MidiFile midi, string? songEndPosition)
 {
     if (!TryGetRoundedSongEndBar(songEndPosition, out long startBar))
     {
-        throw new InvalidOperationException("Unable to determine song length from moggsong data for BeatWeaver master track generation.");
+        throw new InvalidOperationException("Unable to determine BeatWeaver master track placement from moggsong data. Expected song_info.length in bar:beat:tick format.");
     }
 
     foreach (TrackChunk existingMasterTrack in midi
@@ -412,6 +412,9 @@ static bool TryGetRoundedSongEndBar(string? songEndPosition, out long roundedBar
         return false;
     }
 
+    // Amplitude song_info.length is expected as bar:beat:tick.
+    // We only need the next full bar boundary, so any non-zero beat or tick
+    // component rounds the position up to the next measure start.
     string[] parts = songEndPosition.Split(':', StringSplitOptions.TrimEntries);
     if (parts.Length == 0 || !long.TryParse(parts[0], out long bar))
     {
