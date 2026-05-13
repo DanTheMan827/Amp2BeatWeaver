@@ -4,6 +4,8 @@ using Melanchall.DryWetMidi.Interaction;
 
 internal static partial class App
 {
+    const short TargetTicksPerQuarterNote = 96;
+
     static MidiConversionResult ConvertMidi(string inputPath, string outputPath, string songName, List<MoggTrack> moggTracks, string? songEndPosition)
     {
         var noteMap = new Dictionary<int, int>
@@ -38,6 +40,7 @@ internal static partial class App
             NotEnoughBytesPolicy = NotEnoughBytesPolicy.Ignore,
             UnknownChannelEventPolicy = UnknownChannelEventPolicy.SkipStatusByteAndOneDataByte,
         });
+        EnsureTicksPerQuarterNote(midi, TargetTicksPerQuarterNote);
 
         var noteTracks = midi.GetTrackChunks().Where(track => track.Events.Any(e => e is NoteOnEvent)).Where((t, index) => index < moggTracks.Count() && t.Events.OfType<SequenceTrackNameEvent>().First().Text.StartsWith("T")).ToList();
         for (int index = 0; index < noteTracks.Count; index++)
@@ -85,6 +88,43 @@ internal static partial class App
         TimeSpan duration = TimeSpan.FromMilliseconds(midi.GetDuration<MetricTimeSpan>().TotalMilliseconds);
         midi.Write(outputPath, overwriteFile: true);
         return new MidiConversionResult(noteTracks.Count, duration);
+    }
+
+    static void EnsureTicksPerQuarterNote(MidiFile midi, short targetTicksPerQuarterNote)
+    {
+        if (midi.TimeDivision is not TicksPerQuarterNoteTimeDivision sourceDivision)
+        {
+            throw new InvalidOperationException("Input MIDI must use ticks-per-quarter-note time division.");
+        }
+
+        short sourceTicksPerQuarterNote = sourceDivision.TicksPerQuarterNote;
+        if (sourceTicksPerQuarterNote == targetTicksPerQuarterNote)
+        {
+            return;
+        }
+
+        double scale = targetTicksPerQuarterNote / (double)sourceTicksPerQuarterNote;
+        foreach (TrackChunk trackChunk in midi.GetTrackChunks())
+        {
+            List<TimedEvent> timedEvents = trackChunk.GetTimedEvents().ToList();
+            trackChunk.Events.Clear();
+
+            long previousEventTime = 0;
+            foreach (TimedEvent timedEvent in timedEvents)
+            {
+                long scaledEventTime = (long)Math.Round(timedEvent.Time * scale, MidpointRounding.AwayFromZero);
+                if (scaledEventTime < previousEventTime)
+                {
+                    scaledEventTime = previousEventTime;
+                }
+
+                timedEvent.Event.DeltaTime = scaledEventTime - previousEventTime;
+                trackChunk.Events.Add(timedEvent.Event);
+                previousEventTime = scaledEventTime;
+            }
+        }
+
+        midi.TimeDivision = new TicksPerQuarterNoteTimeDivision(targetTicksPerQuarterNote);
     }
 
     static void AddMasterTrack(MidiFile midi, string? songEndPosition)
