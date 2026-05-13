@@ -69,7 +69,7 @@ try
 
     if (amplitudeMogg is not null)
     {
-        File.Copy(amplitudeMogg, Path.Combine(outputSongDirectory, $"{normalizedSongId}.ogg"), overwrite: true);
+        CopyMoggAsOgg(amplitudeMogg, Path.Combine(outputSongDirectory, $"{normalizedSongId}.ogg"));
     }
 
     List<double> trackVolumes = ComputeTrackVolumes(playableTracks, moggVolumes);
@@ -265,6 +265,44 @@ static List<MoggTrack> GetMoggTracks(DataArray root)
     }
 
     return result;
+}
+
+static void CopyMoggAsOgg(string inputPath, string outputPath)
+{
+    using var input = File.OpenRead(inputPath);
+    using var output = File.Create(outputPath);
+
+    long oggOffset = FindOggStreamOffset(input);
+    input.Position = oggOffset >= 0 ? oggOffset : 0;
+    input.CopyTo(output);
+}
+
+static long FindOggStreamOffset(Stream input)
+{
+    ReadOnlySpan<byte> oggSignature = "OggS"u8;
+    byte[] buffer = new byte[8192 + oggSignature.Length - 1];
+    int overlap = 0;
+    long bytesRead = 0;
+
+    while (true)
+    {
+        int read = input.Read(buffer, overlap, buffer.Length - overlap);
+        if (read == 0)
+        {
+            return -1;
+        }
+
+        int bufferLength = overlap + read;
+        int signatureIndex = buffer.AsSpan(0, bufferLength).IndexOf(oggSignature);
+        if (signatureIndex >= 0)
+        {
+            return bytesRead - overlap + signatureIndex;
+        }
+
+        bytesRead += read;
+        overlap = Math.Min(oggSignature.Length - 1, bufferLength);
+        buffer.AsSpan(bufferLength - overlap, overlap).CopyTo(buffer);
+    }
 }
 
 static List<float> GetFloatArray(DataArray root, string key)

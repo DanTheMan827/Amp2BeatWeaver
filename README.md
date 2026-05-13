@@ -37,7 +37,7 @@ dotnet run -- <amplitude-input> <output-root-directory>
 - Remaps the 3-lane Amplitude notes to BeatWeaver's 4-lane chart positions
 - Adds a BeatWeaver `master` track with one-measure outro / transition / ending notes after the moggsong-reported song end
 - Writes BeatWeaver `metadata` / `audio` JSON
-- Copies `.mogg` to `.ogg`
+- Copies `.mogg` to `.ogg`, stripping any leading non-Ogg header bytes first
 
 ## Note mapping
 
