@@ -1,7 +1,7 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using DtxCS;
 using DtxCS.DataTypes;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 internal static partial class App
 {
@@ -64,6 +64,8 @@ internal static partial class App
             string? songEndPosition = moggSong.Array("song_info")?.Array("length")?.Any(1);
 
             List<MoggTrack> moggTracks = GetMoggTracks(moggSong);
+            var ambienceTrack = moggTracks.Where(t => t.Name == "bg_click").FirstOrDefault();
+            moggTracks = moggTracks.Where(t => t.Name != "freestyle" && t.Name != "bg_click").ToList();
             List<float> moggVolumes = GetFloatArray(moggSong, "vols");
 
             string outputSongDirectory = Path.Combine(outputRootDirectory, normalizedSongId);
@@ -95,9 +97,11 @@ internal static partial class App
                 Audio = new BeatWeaverAudio
                 {
                     Channels = playableTracks.Select(track => track.Channels).ToList(),
-                    Volume = allZero ? null : trackVolumes,
-                    OutroTracks = Enumerable.Range(0, playableTracks.Count).ToList(),
-                    TransitionTracks = GetTransitionTracks(playableTracks),
+                    Ambience = ambienceTrack?.Channels ?? null,
+                    AmbienceVolume = 0,
+                    Volume = moggVolumes,
+                    OutroTracks = playableTracks.Select((track, index) => index).ToList(),
+                    TransitionTracks = playableTracks.Select((track, index) => index).ToList(),
                 },
             };
 

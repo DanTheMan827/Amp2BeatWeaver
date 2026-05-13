@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="build/DtxCS.Net/DtxCS.Net.csproj" />
+    <ProjectReference Include="AmpHelper\DtxCS\DtxCS.csproj" />
   </ItemGroup>
 
 </Project>

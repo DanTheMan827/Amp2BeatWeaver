@@ -36,7 +36,13 @@ sealed class BeatWeaverAudio
     public required List<List<int>> Channels { get; init; }
 
     [JsonPropertyName("volume")]
-    public List<double>? Volume { get; init; }
+    public List<float>? Volume { get; init; }
+
+    [JsonPropertyName("ambience")]
+    public required List<int>? Ambience { get; init; }
+
+    [JsonPropertyName("ambience_vol")]
+    public double AmbienceVolume { get; init; }
 
     [JsonPropertyName("outro_tracks")]
     public required List<int> OutroTracks { get; init; }
