@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Melanchall.DryWetMidi" Version="8.0.3" />
+    <PackageReference Include="NVorbis" Version="0.10.5" />
+    <PackageReference Include="OggVorbisEncoder" Version="1.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="AmpHelper/**/*.cs" />
+    <Compile Remove="build/**/*.cs" />
+    <EmbeddedResource Remove="AmpHelper/**/*.resx" />
+    <EmbeddedResource Remove="build/**/*.resx" />
+    <None Remove="AmpHelper/**/*.csproj" />
+    <None Remove="build/**/*.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="AmpHelper\DtxCS\DtxCS.csproj" />
+  </ItemGroup>
+
+</Project>
