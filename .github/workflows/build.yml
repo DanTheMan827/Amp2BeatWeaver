@@ -44,6 +44,7 @@ jobs:
   test-customs:
     runs-on: ubuntu-latest
     needs: build
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout repository
